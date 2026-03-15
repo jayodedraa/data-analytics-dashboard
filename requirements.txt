@@ -5,3 +5,4 @@ jupyter==1.0.0
 ipykernel==6.29.0
 Flask==3.0.2
 plotly==5.22.0
+gunicorn==21.2.0

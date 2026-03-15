@@ -1,0 +1,127 @@
+.app-body {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top left, #eef2ff 0, #f9fafb 40%, #e0f2fe 100%);
+  min-height: 100vh;
+}
+
+/* Dark mode background */
+:root[data-bs-theme="dark"] .app-body {
+  background: radial-gradient(circle at top left, #1a202c 0, #0f1419 40%, #161b22 100%);
+}
+
+.app-navbar {
+  background: linear-gradient(90deg, #0f172a, #111827, #0f172a);
+}
+
+.navbar-brand {
+  letter-spacing: 0.05em;
+}
+
+.brand-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 30% 30%, #22c55e, #0ea5e9);
+  color: #f9fafb;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.kpi-card {
+  border: none;
+  background: linear-gradient(145deg, #ffffff, #eef2ff);
+}
+
+.kpi-label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.kpi-value {
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.plot-card {
+  border: none;
+  background-color: #ffffffcc;
+}
+
+.hover-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.15);
+}
+
+.fade-in {
+  animation: fadeInUp 0.5s ease both;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+table.table {
+  font-size: 0.8rem;
+}
+
+.plot-container iframe {
+  border-radius: 0.5rem;
+  box-shadow: 0 0.5rem 1.25rem rgba(15, 23, 42, 0.15);
+}
+
+.app-footer {
+  background-color: #f9fafb;
+  margin-top: auto;
+}
+
+:root[data-bs-theme="dark"] .app-footer {
+  background-color: #1f2937;
+  border-color: #374151 !important;
+}
+
+/* KPI cards dark mode */
+:root[data-bs-theme="dark"] .kpi-card {
+  background: linear-gradient(145deg, #1f2937, #111827) !important;
+  color: #f3f4f6;
+}
+
+/* Plot cards dark mode */
+:root[data-bs-theme="dark"] .plot-card {
+  background-color: #1f2937cc !important;
+  color: #f3f4f6;
+}
+
+/* Dark mode smooth transitions */
+#darkModeToggle {
+  transition: all 0.3s ease;
+}
+
+#darkModeToggle:hover {
+  transform: scale(1.1);
+}
+
+/* Light mode feature cards */
+.bg-light {
+  background-color: #f3f4f6 !important;
+}
+
+:root[data-bs-theme="dark"] .bg-light {
+  background-color: #2d3748 !important;
+}
+
+

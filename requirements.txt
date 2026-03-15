@@ -1,0 +1,7 @@
+pandas==2.2.0
+matplotlib==3.8.2
+SQLAlchemy==2.0.25
+jupyter==1.0.0
+ipykernel==6.29.0
+Flask==3.0.2
+plotly==5.22.0

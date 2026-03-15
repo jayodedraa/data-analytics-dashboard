@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row align-items-center mb-4">
+  <div class="col-lg-6 mb-3 mb-lg-0">
+    <h1 class="display-6 fw-semibold mb-3">Turn raw CSVs into clean insights.</h1>
+    <p class="text-muted mb-4">
+      Drop in any sales-like CSV and this mini analytics studio will clean the data,
+      calculate key metrics, and generate interactive visuals in seconds.
+    </p>
+    <ul class="list-unstyled small text-muted">
+      <li>• Automatic cleaning of whitespace, numeric types, and dates</li>
+      <li>• Instant charts for sales, profit, regions, and customers (when available)</li>
+      <li>• Designed for portfolio-ready data analytics demos</li>
+      <li>• Download filtered data and save favourite views as presets</li>
+    </ul>
+  </div>
+  <div class="col-lg-5 ms-lg-auto">
+    <div class="card shadow-sm hover-lift">
+      <div class="card-body">
+        <h2 class="h5 mb-3">Upload a CSV</h2>
+        <form method="post" enctype="multipart/form-data">
+          <div class="mb-3">
+            <label for="file" class="form-label">Choose CSV file</label>
+            <input
+              class="form-control"
+              type="file"
+              id="file"
+              name="file"
+              accept=".csv,text/csv"
+              required
+            />
+          </div>
+          <button type="submit" class="btn btn-primary w-100">
+            Analyze File
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Feature highlights -->
+<div class="row g-3 mt-5">
+  <div class="col-md-3">
+    <div class="card border-0 bg-light p-4 h-100">
+      <div class="text-center mb-2" style="font-size: 2rem;">📊</div>
+      <h6 class="fw-semibold text-center mb-2">Smart Analysis</h6>
+      <p class="text-muted text-center small mb-0">Auto-detect columns and generate relevant charts</p>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 bg-light p-4 h-100">
+      <div class="text-center mb-2" style="font-size: 2rem;">⚡</div>
+      <h6 class="fw-semibold text-center mb-2">Instant Cleaning</h6>
+      <p class="text-muted text-center small mb-0">Remove duplicates, fix dates, handle missing values</p>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 bg-light p-4 h-100">
+      <div class="text-center mb-2" style="font-size: 2rem;">🎨</div>
+      <h6 class="fw-semibold text-center mb-2">Interactive Visuals</h6>
+      <p class="text-muted text-center small mb-0">Zoom, pan, and explore data with dynamic charts</p>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card border-0 bg-light p-4 h-100">
+      <div class="text-center mb-2" style="font-size: 2rem;">💾</div>
+      <h6 class="fw-semibold text-center mb-2">Easy Export</h6>
+      <p class="text-muted text-center small mb-0">Save filtered results and view presets instantly</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

@@ -3,15 +3,15 @@
 {% block content %}
 <div class="row align-items-center mb-4">
   <div class="col-lg-6 mb-3 mb-lg-0">
-    <h1 class="display-6 fw-semibold mb-3">Turn raw CSVs into clean insights.</h1>
+    <h1 class="display-6 fw-semibold mb-3">Turn any CSV into clean insights.</h1>
     <p class="text-muted mb-4">
-      Drop in any sales-like CSV and this mini analytics studio will clean the data,
-      calculate key metrics, and generate interactive visuals in seconds.
+      Upload <strong>any</strong> CSV file — the dashboard auto-detects your column types
+      and generates as many charts as your data supports. No specific schema required.
     </p>
     <ul class="list-unstyled small text-muted">
-      <li>• Automatic cleaning of whitespace, numeric types, and dates</li>
-      <li>• Instant charts for sales, profit, regions, and customers (when available)</li>
-      <li>• Designed for portfolio-ready data analytics demos</li>
+      <li>• Auto-detects dates, numbers, and categories — no config needed</li>
+      <li>• Generates histograms, time-series trends, bar/pie charts, scatter & correlation heatmaps</li>
+      <li>• Dynamic filters built from whatever categorical columns exist</li>
       <li>• Download filtered data and save favourite views as presets</li>
     </ul>
   </div>
@@ -40,36 +40,145 @@
   </div>
 </div>
 
+<!-- Minimum Requirements Info Panel -->
+<div class="row mb-5">
+  <div class="col-12">
+    <div class="accordion" id="reqAccordion">
+      <div class="accordion-item border-0 shadow-sm">
+        <h2 class="accordion-header">
+          <button
+            class="accordion-button collapsed fw-semibold"
+            type="button"
+            data-bs-toggle="collapse"
+            data-bs-target="#reqBody"
+            aria-expanded="false"
+          >
+            ℹ️ &nbsp; CSV Requirements &amp; what gets unlocked
+          </button>
+        </h2>
+        <div id="reqBody" class="accordion-collapse collapse">
+          <div class="accordion-body small">
+
+            <div class="row g-4">
+              <!-- Minimum -->
+              <div class="col-md-4">
+                <h6 class="fw-semibold text-success">✅ Minimum (always works)</h6>
+                <ul class="mb-0">
+                  <li>At least <strong>one column</strong> of any type</li>
+                  <li>A valid, non-empty CSV file (UTF-8 or common encodings)</li>
+                  <li>Header row in the first line</li>
+                </ul>
+                <p class="text-muted mt-2 mb-0">
+                  Even with just one column you'll get: a numeric summary table, row count KPI,
+                  and a histogram (if the column is numeric).
+                </p>
+              </div>
+
+              <!-- Better with... -->
+              <div class="col-md-4">
+                <h6 class="fw-semibold text-warning">⚡ Better with numeric columns</h6>
+                <p class="text-muted mb-1">
+                  Any column that looks like a number (or is named like one below) unlocks:
+                </p>
+                <ul class="mb-2">
+                  <li>Histograms for each numeric column</li>
+                  <li>Scatter plot (2+ numeric columns)</li>
+                  <li>Correlation heatmap (3+ numeric columns)</li>
+                  <li>Sum KPI cards</li>
+                </ul>
+                <p class="text-muted mb-1"><strong>Auto-recognised names</strong> (any variant):</p>
+                <code>Sales / Revenue / Amount / Profit / Margin / Quantity / Discount / Price / Value</code>
+              </div>
+
+              <!-- Even Better -->
+              <div class="col-md-4">
+                <h6 class="fw-semibold text-primary">🚀 Even better with dates &amp; categories</h6>
+                <p class="text-muted mb-1"><strong>Date column</strong> (name contains <em>date / time / created / timestamp</em>):</p>
+                <ul class="mb-2">
+                  <li>Monthly time-series trend charts</li>
+                  <li>Year / Month filter dropdowns</li>
+                  <li>Month-over-month % change metrics</li>
+                </ul>
+                <p class="text-muted mb-1"><strong>Categorical columns</strong> (≤ 50 unique values):</p>
+                <ul class="mb-0">
+                  <li>Bar &amp; pie charts per category</li>
+                  <li>Filter dropdowns for each category</li>
+                </ul>
+                <p class="text-muted mt-2 mb-0"><strong>Auto-recognised names:</strong>
+                  <code>Region / Category / Segment / Customer / Product</code> and their common variants.
+                </p>
+              </div>
+            </div>
+
+            <hr class="my-3"/>
+            <div class="row">
+              <div class="col">
+                <h6 class="fw-semibold">💡 Example CSV layouts that work great</h6>
+                <div class="row g-2">
+                  <div class="col-md-4">
+                    <div class="bg-light rounded p-2 small font-monospace">
+                      Date, Product, Sales, Profit<br/>
+                      2024-01-05, Widget A, 150, 40<br/>
+                      2024-01-06, Widget B, 90, -10
+                    </div>
+                    <p class="text-muted small mt-1 mb-0">Sales + date → all charts</p>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="bg-light rounded p-2 small font-monospace">
+                      Name, Score, Grade, Subject<br/>
+                      Alice, 88, A, Math<br/>
+                      Bob, 72, B, Science
+                    </div>
+                    <p class="text-muted small mt-1 mb-0">Any numeric + category → bar/pie/scatter</p>
+                  </div>
+                  <div class="col-md-4">
+                    <div class="bg-light rounded p-2 small font-monospace">
+                      Temperature, Humidity, City<br/>
+                      32.1, 68, Mumbai<br/>
+                      18.5, 52, Delhi
+                    </div>
+                    <p class="text-muted small mt-1 mb-0">Pure numeric → histograms + scatter</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Feature highlights -->
-<div class="row g-3 mt-5">
+<div class="row g-3 mt-2">
   <div class="col-md-3">
     <div class="card border-0 bg-light p-4 h-100">
       <div class="text-center mb-2" style="font-size: 2rem;">📊</div>
-      <h6 class="fw-semibold text-center mb-2">Smart Analysis</h6>
-      <p class="text-muted text-center small mb-0">Auto-detect columns and generate relevant charts</p>
+      <h6 class="fw-semibold text-center mb-2">Smart Auto-Detection</h6>
+      <p class="text-muted text-center small mb-0">Identifies dates, numbers, and categories automatically</p>
     </div>
   </div>
   <div class="col-md-3">
     <div class="card border-0 bg-light p-4 h-100">
       <div class="text-center mb-2" style="font-size: 2rem;">⚡</div>
       <h6 class="fw-semibold text-center mb-2">Instant Cleaning</h6>
-      <p class="text-muted text-center small mb-0">Remove duplicates, fix dates, handle missing values</p>
+      <p class="text-muted text-center small mb-0">Removes duplicates, fixes dates, coerces numeric columns</p>
     </div>
   </div>
   <div class="col-md-3">
     <div class="card border-0 bg-light p-4 h-100">
       <div class="text-center mb-2" style="font-size: 2rem;">🎨</div>
       <h6 class="fw-semibold text-center mb-2">Interactive Visuals</h6>
-      <p class="text-muted text-center small mb-0">Zoom, pan, and explore data with dynamic charts</p>
+      <p class="text-muted text-center small mb-0">Trend lines, heatmaps, scatter plots, bar & pie — whatever fits</p>
     </div>
   </div>
   <div class="col-md-3">
     <div class="card border-0 bg-light p-4 h-100">
       <div class="text-center mb-2" style="font-size: 2rem;">💾</div>
       <h6 class="fw-semibold text-center mb-2">Easy Export</h6>
-      <p class="text-muted text-center small mb-0">Save filtered results and view presets instantly</p>
+      <p class="text-muted text-center small mb-0">Download filtered data and save favourite filter presets</p>
     </div>
   </div>
 </div>
 {% endblock %}
-

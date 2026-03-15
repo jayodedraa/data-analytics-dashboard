@@ -1,9 +1,12 @@
 """
-Simple analytics web application (local-only) for uploading a CSV and viewing
-cleaned summaries and visualizations.
+Schema-agnostic analytics web application (local-only).
+
+Works with ANY CSV file – not just the original data_augmented.csv schema.
+It auto-detects column types and produces whatever charts are possible given
+the available data.
 
 Usage (from project root):
-    .venv\Scripts\activate          # on Windows
+    .venv\\Scripts\\activate          # on Windows
     python webapp/app.py
 
 Then open http://127.0.0.1:5000 in your browser.
@@ -12,7 +15,7 @@ Then open http://127.0.0.1:5000 in your browser.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List, Tuple
 
 import pandas as pd
@@ -26,385 +29,466 @@ from flask import (
     flash,
     send_file,
 )
-from io import StringIO, BytesIO
+from io import BytesIO
 
 
 app = Flask(__name__)
 
-# Shared Plotly config so zoom/pan are available via the toolbar,
-# but not activated by default mouse drag, and the mode bar only appears on hover.
+# Shared Plotly config – toolbar on hover, no aggressive zoom-by-drag
 PLOT_CONFIG = {
     "displaylogo": False,
     "scrollZoom": False,
     "displayModeBar": "hover",
     "modeBarButtonsToRemove": [
-        "zoom2d",
-        "zoomIn2d",
-        "zoomOut2d",
-        "autoScale2d",
-        "lasso2d",
-        "select2d",
+        "zoom2d", "zoomIn2d", "zoomOut2d",
+        "autoScale2d", "lasso2d", "select2d",
     ],
 }
 
-# Simple in-memory store for last uploaded dataset and presets (local demo only)
+# In-memory store (local demo only)
 LAST_DF_BASE: Optional[pd.DataFrame] = None
 LAST_DF_FILTERED: Optional[pd.DataFrame] = None
 FILTER_PRESETS: List[Tuple[str, Dict[str, str]]] = []
-app.secret_key = "local-dev-secret-key"  # OK for local-only usage
+LAST_SCHEMA: Optional[Dict[str, Any]] = None   # detected column roles
+app.secret_key = "local-dev-secret-key"
+
+# ─── Known-column aliases ─────────────────────────────────────────────────
+# Map common column name variants → a canonical "role" key.
+# First match wins (case-insensitive).
+ROLE_ALIASES: Dict[str, List[str]] = {
+    "sales":    ["sales", "revenue", "amount", "total", "price", "value", "income"],
+    "profit":   ["profit", "margin", "gain", "net"],
+    "quantity": ["quantity", "qty", "units", "count"],
+    "discount": ["discount", "disc", "rebate"],
+    "date":     ["order date", "date", "transaction date", "invoice date",
+                 "ship date", "created at", "timestamp", "time"],
+    "category": ["category", "cat", "product category", "type", "group"],
+    "subcategory": ["sub-category", "subcategory", "sub category",
+                    "product type", "subtype"],
+    "region":   ["region", "area", "zone", "territory"],
+    "segment":  ["segment", "customer segment", "market segment"],
+    "customer": ["customer name", "customer", "client", "client name",
+                 "buyer", "customer id"],
+    "product":  ["product name", "product", "item", "sku", "description"],
+    "city":     ["city", "town"],
+    "state":    ["state", "province", "county"],
+    "country":  ["country", "nation"],
+}
+
+# ─── Colour palette ────────────────────────────────────────────────────────
+PRIMARY   = "#14B8A6"
+SECONDARY = "#8B5CF6"
+WARM      = "#F59E0B"
+DANGER    = "#EF4444"
+PALETTE   = [PRIMARY, SECONDARY, WARM, "#EC4899", "#3B82F6", "#10B981"]
 
 
-@dataclass
-class AnalysisResult:
-    """Container for cleaned data and derived insights."""
-
-    numeric_summary_html: str
-    special_metrics: Dict[str, Any]
-    plots: Dict[str, str]  # slot -> html
-    active_filters: Dict[str, Optional[str]]
-    trend_metrics: Dict[str, Any]
-
+# ──────────────────────────────────────────────────────────────────────────
+# CSV reading
+# ──────────────────────────────────────────────────────────────────────────
 
 def read_uploaded_csv(file_storage) -> pd.DataFrame:
-    """
-    Load an uploaded CSV into a DataFrame.
-
-    Tries a small set of common encodings so that typical Excel/CSV exports
-    with non-UTF8 characters are handled gracefully.
-    """
-    file_storage.stream.seek(0)
-    encodings_to_try = ["utf-8-sig", "cp1252", "latin1"]
-    last_error: Exception | None = None
-
-    for enc in encodings_to_try:
+    """Load CSV handling common encodings gracefully."""
+    encodings = ["utf-8-sig", "cp1252", "latin1"]
+    for enc in encodings:
         try:
             file_storage.stream.seek(0)
             return pd.read_csv(file_storage, encoding=enc)
-        except UnicodeDecodeError as exc:
-            last_error = exc
+        except UnicodeDecodeError:
             continue
-
-    # Final fallback: replace undecodable characters instead of failing
     file_storage.stream.seek(0)
     return pd.read_csv(file_storage, encoding="latin1", encoding_errors="replace")
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Schema detection
+# ──────────────────────────────────────────────────────────────────────────
+
+def detect_schema(df: pd.DataFrame) -> Dict[str, Any]:
+    """
+    Inspect a DataFrame and return a schema dict describing detected roles.
+
+    Schema keys:
+        role_map       – {role: actual_column_name} for recognised columns
+        numeric_cols   – list of numeric column names
+        date_cols      – list of datetime column names
+        categorical_cols – list of low-cardinality object columns (≤50 unique)
+        high_card_cols – list of high-cardinality text columns
+        total_rows     – int
+        total_cols     – int
+    """
+    col_lower_map = {c.strip().lower(): c for c in df.columns}
+
+    role_map: Dict[str, str] = {}
+    for role, aliases in ROLE_ALIASES.items():
+        for alias in aliases:
+            if alias in col_lower_map:
+                col = col_lower_map[alias]
+                # Only assign if not already taken by another role
+                if col not in role_map.values():
+                    role_map[role] = col
+                break
+
+    # Re-classify columns by dtype after cleaning
+    numeric_cols = df.select_dtypes(include="number").columns.tolist()
+    date_cols    = df.select_dtypes(include=["datetime", "datetimetz"]).columns.tolist()
+    obj_cols     = df.select_dtypes(include=["object", "string"]).columns.tolist()
+
+    categorical_cols: List[str] = []
+    high_card_cols:   List[str] = []
+    for col in obj_cols:
+        n_unique = df[col].nunique(dropna=True)
+        if n_unique <= 50:
+            categorical_cols.append(col)
+        else:
+            high_card_cols.append(col)
+
+    return {
+        "role_map":         role_map,
+        "numeric_cols":     numeric_cols,
+        "date_cols":        date_cols,
+        "categorical_cols": categorical_cols,
+        "high_card_cols":   high_card_cols,
+        "total_rows":       len(df),
+        "total_cols":       len(df.columns),
+        "all_columns":      df.columns.tolist(),
+    }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Cleaning
+# ──────────────────────────────────────────────────────────────────────────
+
 def clean_generic(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Apply generic cleaning steps that work for many tabular datasets:
+    Generic cleaning that works on any DataFrame:
     - Drop exact duplicates
     - Strip whitespace from string columns
-    - Convert Postal Code to string if present
-    - Coerce known numeric columns to numeric (if they exist)
-    - Parse known date columns (if they exist)
-    - Add simple date parts if Order Date exists
+    - Auto-coerce numeric-looking object columns
+    - Auto-parse date-looking object columns
+    - Add Year / MonthNum / Month helper columns for the first date column found
     """
     df = df.drop_duplicates().copy()
 
-    # Strip whitespace
-    obj_cols = df.select_dtypes(include=["object", "string"]).columns
+    # Strip whitespace from string / object columns
+    obj_cols = df.select_dtypes(include=["object", "string"]).columns.tolist()
     for col in obj_cols:
         df[col] = df[col].astype("string").str.strip()
 
-    # Postal code as text
-    if "Postal Code" in df.columns:
-        df["Postal Code"] = df["Postal Code"].astype("string")
+    # Try to coerce object columns that look numeric
+    for col in obj_cols:
+        if df[col].str.replace(r"[\$,£€₹%\s]", "", regex=True).str.match(
+            r"^-?[\d]+\.?[\d]*$"
+        ).dropna().all():
+            df[col] = pd.to_numeric(
+                df[col].str.replace(r"[\$,£€₹%,\s]", "", regex=True),
+                errors="coerce",
+            )
 
-    # Coerce common numeric columns if they exist
-    numeric_candidates = ["Sales", "Profit", "Quantity", "Discount"]
-    for col in numeric_candidates:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
+    # Parse date-looking columns (heuristic: name contains "date"/"time"/"created")
+    date_keywords = ["date", "time", "created", "updated", "timestamp", "dt"]
+    for col in df.select_dtypes(include=["object", "string"]).columns:
+        if any(kw in col.lower() for kw in date_keywords):
+            parsed = pd.to_datetime(df[col], errors="coerce", dayfirst=False)
+            # Accept if at least 50 % of non-null values parsed successfully
+            if parsed.notna().sum() >= 0.5 * df[col].notna().sum():
+                df[col] = parsed
 
-    # Parse date-like columns
-    date_cols = ["Order Date", "Ship Date"]
-    for col in date_cols:
-        if col in df.columns:
-            df[col] = pd.to_datetime(df[col], errors="coerce", dayfirst=False)
-
-    # Add simple date parts if we have Order Date
-    if "Order Date" in df.columns and pd.api.types.is_datetime64_any_dtype(df["Order Date"]):
-        if "Order Year" not in df.columns:
-            df["Order Year"] = df["Order Date"].dt.year
-        if "Order MonthNum" not in df.columns:
-            df["Order MonthNum"] = df["Order Date"].dt.month
-        if "Order Month" not in df.columns:
-            df["Order Month"] = df["Order Date"].dt.month_name()
+    # For the FIRST datetime column, inject Year / MonthNum / Month helpers
+    dt_cols = df.select_dtypes(include=["datetime", "datetimetz"]).columns.tolist()
+    if dt_cols:
+        primary_date = dt_cols[0]
+        if "_Year" not in df.columns and f"{primary_date}_Year" not in df.columns:
+            df["_Year"]     = df[primary_date].dt.year
+            df["_MonthNum"] = df[primary_date].dt.month
+            df["_Month"]    = df[primary_date].dt.month_name()
+            df["_PrimaryDate"] = df[primary_date]  # store reference
 
     return df
 
 
-def build_plots(df: pd.DataFrame) -> Dict[str, str]:
-    """Create a set of key plots as interactive Plotly HTML snippets mapped by slot name."""
+# ──────────────────────────────────────────────────────────────────────────
+# Plot builder (schema-agnostic)
+# ──────────────────────────────────────────────────────────────────────────
+
+def _fig_to_html(fig) -> str:
+    fig.update_layout(dragmode=False)
+    return fig.to_html(include_plotlyjs=False, full_html=False, config=PLOT_CONFIG)
+
+
+def build_plots(df: pd.DataFrame, schema: Dict[str, Any]) -> Dict[str, str]:
+    """
+    Build as many meaningful charts as the data allows.
+
+    Returns a dict  slot_name → HTML snippet.  Slots are generated dynamically
+    so the template just iterates over whatever is present.
+    """
     plots: Dict[str, str] = {}
+    rm = schema["role_map"]
 
-    # Teal / purple modern palette
-    primary_color = "#14B8A6"
-    secondary_color = "#8B5CF6"
+    # ── 1. Time-series trend for every numeric column against the primary date ──
+    if "_PrimaryDate" in df.columns:
+        num_cols = schema["numeric_cols"]
+        for nc in num_cols[:3]:   # limit to first 3 numeric columns
+            valid = df.dropna(subset=["_PrimaryDate", nc])
+            if valid.empty:
+                continue
+            monthly = (
+                valid.assign(
+                    _TY=lambda x: x["_PrimaryDate"].dt.year,
+                    _TM=lambda x: x["_PrimaryDate"].dt.month,
+                )
+                .groupby(["_TY", "_TM"], as_index=False)[nc]
+                .sum()
+            )
+            monthly["_YM"] = pd.to_datetime(
+                monthly[["_TY", "_TM"]].assign(DAY=1).rename(
+                    columns={"_TY": "year", "_TM": "month"}
+                )
+            )
+            fig = px.line(
+                monthly, x="_YM", y=nc,
+                title=f"Monthly {nc} Trend 📈",
+                markers=True,
+                color_discrete_sequence=[PRIMARY],
+            )
+            fig.update_layout(
+                template="plotly_white",
+                margin=dict(l=20, r=20, t=40, b=40),
+                xaxis_title="Month", yaxis_title=nc,
+            )
+            plots[f"trend_{nc}"] = _fig_to_html(fig)
 
-    # Monthly sales trend (line) if dates available
-    if {"Order Date", "Sales"}.issubset(df.columns):
-        monthly = (
-            df.dropna(subset=["Order Date"])
-            .assign(Year=lambda x: x["Order Date"].dt.year, Month=lambda x: x["Order Date"].dt.month)
-            .groupby(["Year", "Month"], as_index=False)["Sales"]
-            .sum()
-        )
-        monthly["YearMonth"] = pd.to_datetime(
-            monthly[["Year", "Month"]].assign(DAY=1)
-        )
-        fig = px.line(
-            monthly,
-            x="YearMonth",
-            y="Sales",
-            title="Monthly Sales Trend 📈",
-            markers=True,
-            color_discrete_sequence=[primary_color],
-        )
-        fig.update_layout(
-            template="plotly_white",
-            margin=dict(l=20, r=20, t=40, b=40),
-            dragmode=False,
-            xaxis_title="Month",
-            yaxis_title="Sales",
-        )
-        plots["trend"] = fig.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
-        )
-
-    # Histogram of Sales
-    if "Sales" in df.columns:
+    # ── 2. Histogram for every numeric column ──────────────────────────────
+    num_cols = schema["numeric_cols"]
+    for i, nc in enumerate(num_cols[:6]):   # cap at 6
+        color = PALETTE[i % len(PALETTE)]
         fig = px.histogram(
-            df,
-            x="Sales",
-            nbins=30,
-            title="Distribution of Sales",
-            color_discrete_sequence=[primary_color],
+            df, x=nc, nbins=30,
+            title=f"Distribution of {nc}",
+            color_discrete_sequence=[color],
         )
         fig.update_layout(
             template="plotly_white",
             margin=dict(l=20, r=20, t=40, b=20),
-            dragmode=False,
         )
-        plots["sales_hist"] = fig.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
-        )
+        plots[f"hist_{nc}"] = _fig_to_html(fig)
 
-    # Histogram of Profit
-    if "Profit" in df.columns:
-        fig = px.histogram(
-            df,
-            x="Profit",
-            nbins=30,
-            title="Distribution of Profit",
-            color_discrete_sequence=[secondary_color],
-        )
-        fig.update_layout(
-            template="plotly_white",
-            margin=dict(l=20, r=20, t=40, b=20),
-            dragmode=False,
-        )
-        plots["profit_hist"] = fig.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
-        )
+    # ── 3. Bar + pie for each categorical × first numeric ─────────────────
+    if num_cols:
+        primary_num = rm.get("sales") or rm.get("profit") or num_cols[0]
+        if primary_num not in df.columns:
+            primary_num = num_cols[0]
 
-    # Sales by Region
-    if {"Region", "Sales"}.issubset(df.columns):
+        cat_cols = schema["categorical_cols"]
+        for i, cat in enumerate(cat_cols[:4]):   # cap at 4 categories
+            grouped = (
+                df.groupby(cat, as_index=False)[primary_num]
+                .sum()
+                .sort_values(primary_num, ascending=False)
+            )
+            color = PALETTE[i % len(PALETTE)]
+
+            # Bar
+            fig = px.bar(
+                grouped, x=cat, y=primary_num,
+                title=f"{primary_num} by {cat}",
+                color_discrete_sequence=[color],
+            )
+            fig.update_layout(
+                template="plotly_white",
+                margin=dict(l=20, r=20, t=40, b=80),
+                xaxis_tickangle=-45,
+            )
+            plots[f"bar_{cat}"] = _fig_to_html(fig)
+
+            # Pie (only if ≤ 15 unique values for readability)
+            if grouped[cat].nunique() <= 15:
+                fig_pie = px.pie(
+                    grouped, names=cat, values=primary_num,
+                    title=f"{primary_num} share by {cat} 🥧",
+                    color_discrete_sequence=px.colors.sequential.Teal,
+                )
+                fig_pie.update_layout(
+                    template="plotly_white",
+                    margin=dict(l=20, r=20, t=40, b=20),
+                )
+                plots[f"pie_{cat}"] = _fig_to_html(fig_pie)
+
+    # ── 4. Top-10 "customer / product" bar chart ──────────────────────────
+    top_col = rm.get("customer") or rm.get("product")
+    if top_col and top_col in df.columns and num_cols:
+        primary_num = rm.get("sales") or rm.get("profit") or num_cols[0]
+        if primary_num not in df.columns:
+            primary_num = num_cols[0]
         grouped = (
-            df.groupby("Region", as_index=False)["Sales"]
+            df.groupby(top_col, as_index=False)[primary_num]
             .sum()
-            .sort_values("Sales", ascending=False)
-        )
-        fig = px.bar(
-            grouped,
-            x="Region",
-            y="Sales",
-            title="Total Sales by Region",
-            color_discrete_sequence=[primary_color],
-        )
-        fig.update_layout(
-            template="plotly_white",
-            margin=dict(l=20, r=20, t=40, b=20),
-            dragmode=False,
-        )
-        plots["region_bar"] = fig.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
-        )
-
-        # Region sales share (pie)
-        fig_pie = px.pie(
-            grouped,
-            names="Region",
-            values="Sales",
-            title="Sales Share by Region 🥧",
-            color_discrete_sequence=px.colors.sequential.Teal,
-        )
-        fig_pie.update_layout(
-            template="plotly_white",
-            margin=dict(l=20, r=20, t=40, b=20),
-            dragmode=False,
-        )
-        plots["region_pie"] = fig_pie.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
-        )
-
-    # Profit by Sub-Category
-    if {"Sub-Category", "Profit"}.issubset(df.columns):
-        grouped = (
-            df.groupby("Sub-Category", as_index=False)["Profit"]
-            .sum()
-            .sort_values("Profit", ascending=True)
-        )
-        fig = px.bar(
-            grouped,
-            x="Sub-Category",
-            y="Profit",
-            title="Profit by Sub-Category (Ascending)",
-            color_discrete_sequence=[secondary_color],
-        )
-        fig.update_layout(
-            template="plotly_white",
-            margin=dict(l=20, r=20, t=40, b=80),
-            xaxis_tickangle=-45,
-            dragmode=False,
-        )
-        plots["subcat_profit"] = fig.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
-        )
-
-    # Top 10 customers by Sales
-    customer_col = None
-    if "Customer Name" in df.columns:
-        customer_col = "Customer Name"
-    elif "Customer ID" in df.columns:
-        customer_col = "Customer ID"
-
-    if customer_col and "Sales" in df.columns:
-        grouped = (
-            df.groupby(customer_col, as_index=False)["Sales"]
-            .sum()
-            .sort_values("Sales", ascending=False)
+            .sort_values(primary_num, ascending=False)
             .head(10)
         )
         fig = px.bar(
-            grouped,
-            x=customer_col,
-            y="Sales",
-            title="Top 10 Customers by Sales",
-            color_discrete_sequence=[primary_color],
+            grouped, x=top_col, y=primary_num,
+            title=f"Top 10 {top_col} by {primary_num}",
+            color_discrete_sequence=[PRIMARY],
         )
         fig.update_layout(
             template="plotly_white",
             margin=dict(l=20, r=20, t=40, b=80),
             xaxis_tickangle=-45,
-            dragmode=False,
         )
-        plots["top_customers"] = fig.to_html(
-            include_plotlyjs=False,
-            full_html=False,
-            config=PLOT_CONFIG,
+        plots["top_entities"] = _fig_to_html(fig)
+
+    # ── 5. Scatter: first two numeric columns ─────────────────────────────
+    if len(num_cols) >= 2:
+        x_col, y_col = num_cols[0], num_cols[1]
+        color_col = schema["categorical_cols"][0] if schema["categorical_cols"] else None
+        fig = px.scatter(
+            df.sample(min(2000, len(df)), random_state=42),
+            x=x_col, y=y_col,
+            color=color_col,
+            title=f"{x_col} vs {y_col}",
+            opacity=0.6,
+            color_discrete_sequence=PALETTE,
         )
+        fig.update_layout(
+            template="plotly_white",
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+        plots["scatter"] = _fig_to_html(fig)
+
+    # ── 6. Correlation heat-map (if ≥ 3 numeric cols) ─────────────────────
+    if len(num_cols) >= 3:
+        corr = df[num_cols].corr().round(2)
+        import plotly.figure_factory as ff
+        try:
+            fig = ff.create_annotated_heatmap(
+                z=corr.values.tolist(),
+                x=corr.columns.tolist(),
+                y=corr.index.tolist(),
+                colorscale="Teal",
+                showscale=True,
+            )
+            fig.update_layout(
+                title="Correlation Heat-map 🔥",
+                template="plotly_white",
+                margin=dict(l=60, r=20, t=60, b=60),
+            )
+            plots["correlation"] = _fig_to_html(fig)
+        except Exception:
+            pass   # Silently skip if ff fails
 
     return plots
 
 
-def _compute_trend_metrics(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> Dict[str, Any]:
-    """
-    Compute simple month-over-month trend metrics for Sales and Profit.
+# ──────────────────────────────────────────────────────────────────────────
+# Trend metrics (schema-agnostic)
+# ──────────────────────────────────────────────────────────────────────────
 
-    Uses Order Year / Order MonthNum from the base dataset to find the latest
-    and previous month, then calculates percentage change on the filtered slice.
-    """
+def _compute_trend_metrics(base_df: pd.DataFrame, filtered_df: pd.DataFrame) -> Dict[str, Any]:
+    """Month-over-month change for the primary numeric column (if dates available)."""
     metrics: Dict[str, Any] = {
-        "sales_change_pct": None,
-        "profit_change_pct": None,
+        "pct_changes": [],   # list of {label, value, col}
         "comparison_label": "",
     }
 
-    if not {"Order Year", "Order MonthNum"}.issubset(base_df.columns):
+    if "_Year" not in base_df.columns or "_MonthNum" not in base_df.columns:
         return metrics
 
-    # Determine latest and previous month from the base dataset
     month_keys = (
-        base_df[["Order Year", "Order MonthNum"]]
+        base_df[["_Year", "_MonthNum"]]
         .dropna()
         .drop_duplicates()
-        .sort_values(["Order Year", "Order MonthNum"])
+        .sort_values(["_Year", "_MonthNum"])
     )
     if len(month_keys) < 2:
         return metrics
 
-    latest_year, latest_month = month_keys.iloc[-1]
-    prev_year, prev_month = month_keys.iloc[-2]
+    ly, lm = month_keys.iloc[-1]
+    py, pm = month_keys.iloc[-2]
+    metrics["comparison_label"] = f"{int(ly)}/{int(lm):02d} vs {int(py)}/{int(pm):02d}"
 
-    metrics["comparison_label"] = f"{int(latest_year)}/{int(latest_month):02d} vs {int(prev_year)}/{int(prev_month):02d}"
+    def _slice(df, y, m):
+        return df[(df["_Year"] == int(y)) & (df["_MonthNum"] == int(m))]
 
-    def _period_slice(df: pd.DataFrame, year: float, month: float) -> pd.DataFrame:
-        return df[(df["Order Year"] == int(year)) & (df["Order MonthNum"] == int(month))]
+    cur  = _slice(filtered_df, ly, lm)
+    prev = _slice(filtered_df, py, pm)
 
-    current_slice = _period_slice(filtered_df, latest_year, latest_month)
-    prev_slice = _period_slice(filtered_df, prev_year, prev_month)
-
-    if "Sales" in filtered_df.columns:
-        current_sales = current_slice["Sales"].sum()
-        prev_sales = prev_slice["Sales"].sum()
-        if prev_sales != 0:
-            metrics["sales_change_pct"] = (current_sales - prev_sales) / abs(prev_sales) * 100.0
-
-    if "Profit" in filtered_df.columns:
-        current_profit = current_slice["Profit"].sum()
-        prev_profit = prev_slice["Profit"].sum()
-        if prev_profit != 0:
-            metrics["profit_change_pct"] = (current_profit - prev_profit) / abs(prev_profit) * 100.0
+    for nc in filtered_df.select_dtypes(include="number").columns:
+        if nc.startswith("_"):
+            continue
+        c_val = cur[nc].sum()
+        p_val = prev[nc].sum()
+        if p_val != 0:
+            pct = (c_val - p_val) / abs(p_val) * 100.0
+            metrics["pct_changes"].append({"col": nc, "value": round(pct, 1)})
 
     return metrics
 
 
-def summarize_dataframe(df: pd.DataFrame, base_df: Optional[pd.DataFrame]) -> AnalysisResult:
+# ──────────────────────────────────────────────────────────────────────────
+# Summarise
+# ──────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class AnalysisResult:
+    numeric_summary_html: str
+    special_metrics: Dict[str, Any]
+    plots: Dict[str, str]
+    active_filters: Dict[str, Any]
+    trend_metrics: Dict[str, Any]
+    schema: Dict[str, Any]
+
+
+def summarize_dataframe(
+    df: pd.DataFrame,
+    base_df: Optional[pd.DataFrame],
+    schema: Dict[str, Any],
+) -> AnalysisResult:
     """Build tables, metrics and plots for display."""
 
-    # Numeric summary
-    numeric_df = df.select_dtypes(include="number")
-    if not numeric_df.empty:
-        numeric_summary = numeric_df.describe().T.round(0)
-        numeric_summary_html = numeric_summary.to_html(
+    # Numeric summary (hide internal _ columns)
+    visible_num = [c for c in schema["numeric_cols"] if not c.startswith("_")]
+    if visible_num:
+        num_sum = df[visible_num].describe().T.round(2)
+        numeric_summary_html = num_sum.to_html(
             classes="table table-sm table-striped", border=0
         )
     else:
         numeric_summary_html = "<p>No numeric columns detected.</p>"
 
-    # Special metrics if Sales/Profit exist
+    # KPI metrics: sum/count for recognised roles
     special_metrics: Dict[str, Any] = {}
-    if "Sales" in df.columns:
-        special_metrics["Total Sales"] = float(df["Sales"].sum(skipna=True))
-    if "Profit" in df.columns:
-        special_metrics["Total Profit"] = float(df["Profit"].sum(skipna=True))
-        loss_mask = df["Profit"] < 0
-        special_metrics["Loss Orders"] = int(loss_mask.sum())
-        special_metrics["Total Loss Amount"] = float(df.loc[loss_mask, "Profit"].sum())
+    rm = schema["role_map"]
+    for role in ("sales", "profit", "quantity"):
+        col = rm.get(role)
+        if col and col in df.columns:
+            special_metrics[f"Total {col}"] = float(df[col].sum(skipna=True))
 
-    plots = build_plots(df)
+    # Loss orders (if profit-like column exists)
+    profit_col = rm.get("profit")
+    if profit_col and profit_col in df.columns:
+        loss_mask = df[profit_col] < 0
+        special_metrics["Loss Orders"]       = int(loss_mask.sum())
+        special_metrics["Total Loss Amount"] = float(df.loc[loss_mask, profit_col].sum())
+        special_metrics["_profit_col"]       = profit_col
 
-    # Filter metadata – for now just echo back which columns exist
-    active_filters: Dict[str, Optional[str]] = {
-        "region": "Region" if "Region" in df.columns else None,
-        "year": "Order Year" if "Order Year" in df.columns else None,
-        "segment": "Segment" if "Segment" in df.columns else None,
+    # Generic: total row count
+    special_metrics["Total Rows"] = len(df)
+
+    plots = build_plots(df, schema)
+
+    # Filters present in this dataset
+    active_filters: Dict[str, Any] = {
+        "has_year":     "_Year"     in df.columns,
+        "has_month":    "_Month"    in df.columns,
+        "has_category": rm.get("category") and rm["category"] in df.columns,
+        "has_region":   rm.get("region")   and rm["region"]   in df.columns,
     }
 
-    trend_metrics = _compute_trend_metrics(base_df, df) if base_df is not None else {}
+    trend_metrics = (
+        _compute_trend_metrics(base_df, df) if base_df is not None else {}
+    )
 
     return AnalysisResult(
         numeric_summary_html=numeric_summary_html,
@@ -412,13 +496,17 @@ def summarize_dataframe(df: pd.DataFrame, base_df: Optional[pd.DataFrame]) -> An
         plots=plots,
         active_filters=active_filters,
         trend_metrics=trend_metrics,
+        schema=schema,
     )
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# Routes
+# ──────────────────────────────────────────────────────────────────────────
+
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Landing page with file upload."""
-    global LAST_DF_BASE, LAST_DF_FILTERED, FILTER_PRESETS
+    global LAST_DF_BASE, LAST_DF_FILTERED, FILTER_PRESETS, LAST_SCHEMA
 
     if request.method == "POST":
         uploaded = request.files.get("file")
@@ -428,7 +516,7 @@ def index():
 
         try:
             df_raw = read_uploaded_csv(uploaded)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             flash(f"Failed to read CSV: {exc}", "danger")
             return redirect(url_for("index"))
 
@@ -436,9 +524,10 @@ def index():
             flash("Uploaded file appears to be empty.", "warning")
             return redirect(url_for("index"))
 
-        LAST_DF_BASE = clean_generic(df_raw)
+        LAST_DF_BASE     = clean_generic(df_raw)
         LAST_DF_FILTERED = LAST_DF_BASE.copy()
-        FILTER_PRESETS = []  # reset presets for new dataset
+        LAST_SCHEMA      = detect_schema(LAST_DF_BASE)
+        FILTER_PRESETS   = []
         return redirect(url_for("dashboard"))
 
     return render_template("index.html")
@@ -446,66 +535,66 @@ def index():
 
 @app.route("/dashboard")
 def dashboard():
-    """Dashboard view with optional filters applied."""
-    global LAST_DF_BASE, LAST_DF_FILTERED, FILTER_PRESETS
+    global LAST_DF_BASE, LAST_DF_FILTERED, FILTER_PRESETS, LAST_SCHEMA
 
     if LAST_DF_BASE is None:
         flash("Please upload a CSV file first.", "warning")
         return redirect(url_for("index"))
 
     base_df = LAST_DF_BASE
+    schema  = LAST_SCHEMA or detect_schema(base_df)
+    rm      = schema["role_map"]
 
-    # Build filter option lists from the base dataset
-    filter_options: Dict[str, list] = {}
-    if "Order Year" in base_df.columns:
-        filter_options["years"] = sorted(int(y) for y in base_df["Order Year"].dropna().unique())
-    if "Order Month" in base_df.columns:
-        # preserve natural month order via MonthNum if available
-        if "Order MonthNum" in base_df.columns:
-            month_order = (
-                base_df[["Order Month", "Order MonthNum"]]
-                .dropna()
-                .drop_duplicates()
-                .sort_values("Order MonthNum")
-            )
-            filter_options["months"] = month_order["Order Month"].tolist()
-        else:
-            filter_options["months"] = sorted(base_df["Order Month"].dropna().unique())
-    if "Region" in base_df.columns:
-        filter_options["regions"] = sorted(base_df["Region"].dropna().unique())
-    if "Category" in base_df.columns:
-        filter_options["categories"] = sorted(base_df["Category"].dropna().unique())
+    # ── Build dynamic filter dropdowns ────────────────────────────────────
+    filter_options: Dict[str, Any] = {}
 
-    # Apply filters based on query parameters or a saved preset
+    if "_Year" in base_df.columns:
+        filter_options["years"] = sorted(
+            int(y) for y in base_df["_Year"].dropna().unique()
+        )
+    if "_Month" in base_df.columns and "_MonthNum" in base_df.columns:
+        month_order = (
+            base_df[["_Month", "_MonthNum"]]
+            .dropna()
+            .drop_duplicates()
+            .sort_values("_MonthNum")
+        )
+        filter_options["months"] = month_order["_Month"].tolist()
+
+    # Up to 4 low-cardinality categorical columns become filter dropdowns
+    cat_cols = schema["categorical_cols"]
+    for cat in cat_cols[:4]:
+        filter_options[f"cat_{cat}"] = sorted(base_df[cat].dropna().unique())
+
+    # ── Apply filters ──────────────────────────────────────────────────────
     df_filtered = base_df.copy()
-    selected = {
-        "year": request.args.get("year") or "",
-        "month": request.args.get("month") or "",
-        "region": request.args.get("region") or "",
-        "category": request.args.get("category") or "",
+    selected: Dict[str, Any] = {
+        "year":   request.args.get("year")   or "",
+        "month":  request.args.get("month")  or "",
         "preset": request.args.get("preset") or "",
     }
+    # Dynamic category filters
+    for cat in cat_cols[:4]:
+        selected[f"cat_{cat}"] = request.args.get(f"cat_{cat}") or ""
 
     # Apply preset if chosen
     if selected["preset"]:
         for name, values in FILTER_PRESETS:
             if name == selected["preset"]:
-                for key in ("year", "month", "region", "category"):
-                    if values.get(key):
-                        selected[key] = values[key]
+                selected.update({k: v for k, v in values.items() if v})
                 break
 
-    if selected["year"] and "Order Year" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["Order Year"] == int(selected["year"])]
-    if selected["month"] and "Order Month" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["Order Month"] == selected["month"]]
-    if selected["region"] and "Region" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["Region"] == selected["region"]]
-    if selected["category"] and "Category" in df_filtered.columns:
-        df_filtered = df_filtered[df_filtered["Category"] == selected["category"]]
+    if selected["year"] and "_Year" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["_Year"] == int(selected["year"])]
+    if selected["month"] and "_Month" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["_Month"] == selected["month"]]
+    for cat in cat_cols[:4]:
+        val = selected.get(f"cat_{cat}", "")
+        if val and cat in df_filtered.columns:
+            df_filtered = df_filtered[df_filtered[cat] == val]
 
     LAST_DF_FILTERED = df_filtered.copy()
-    analysis = summarize_dataframe(df_filtered, base_df)
+    analysis = summarize_dataframe(df_filtered, base_df, schema)
 
     return render_template(
         "results.html",
@@ -513,12 +602,12 @@ def dashboard():
         filters=filter_options,
         selected=selected,
         presets=FILTER_PRESETS,
+        schema=schema,
     )
 
 
 @app.route("/save_preset", methods=["POST"])
-def save_preset() -> Any:
-    """Save the current filter selection as an in-memory preset."""
+def save_preset():
     global FILTER_PRESETS
 
     name = request.form.get("preset_name", "").strip()
@@ -526,40 +615,36 @@ def save_preset() -> Any:
         flash("Please provide a name for the preset.", "warning")
         return redirect(url_for("dashboard", **request.args))
 
-    # Capture current filters from querystring
-    values = {
-        "year": request.args.get("year") or "",
-        "month": request.args.get("month") or "",
-        "region": request.args.get("region") or "",
-        "category": request.args.get("category") or "",
-    }
+    values = {k: v for k, v in request.args.items()}
     FILTER_PRESETS.append((name, values))
     flash(f"Preset '{name}' saved.", "success")
     return redirect(url_for("dashboard", **request.args))
 
 
 @app.route("/download")
-def download_current() -> Any:
-    """Download the currently filtered dataset as CSV."""
+def download_current():
     global LAST_DF_FILTERED
 
     if LAST_DF_FILTERED is None:
         flash("No filtered data available to download.", "warning")
         return redirect(url_for("index"))
 
+    # Drop internal helper columns from the export
+    export_df = LAST_DF_FILTERED.drop(
+        columns=[c for c in LAST_DF_FILTERED.columns if c.startswith("_")],
+        errors="ignore",
+    )
     csv_buffer = BytesIO()
-    LAST_DF_FILTERED.to_csv(csv_buffer, index=False, mode='wb')
+    export_df.to_csv(csv_buffer, index=False)
     csv_buffer.seek(0)
 
     return send_file(
         csv_buffer,
         mimetype="text/csv",
         as_attachment=True,
-        download_name="filtered_sales_export.csv",
+        download_name="filtered_export.csv",
     )
 
 
 if __name__ == "__main__":
-    # Run in debug mode for local development
     app.run(debug=True)
-

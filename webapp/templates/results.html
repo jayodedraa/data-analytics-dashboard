@@ -2,14 +2,17 @@
 
 {% block content %}
 <div class="row mb-4 align-items-center">
-  <div class="col-lg-6">
+  <div class="col-lg-5">
     <h1 class="h4 mb-1">Analysis Overview</h1>
     <p class="text-muted small mb-0">
-      Cleaned snapshot of your uploaded dataset with interactive charts and key metrics.
+      Auto-detected <strong>{{ schema.total_cols }}</strong> columns &amp;
+      <strong>{{ schema.total_rows }}</strong> rows.
+      {% if schema.date_cols %} Found date column(s): <code>{{ schema.date_cols | join(', ') }}</code>.{% endif %}
     </p>
   </div>
-  <div class="col-lg-6 text-lg-end mt-3 mt-lg-0">
+  <div class="col-lg-7 text-lg-end mt-3 mt-lg-0">
     <form class="row gy-2 gx-2 justify-content-lg-end" method="get">
+
       {% if filters.years %}
       <div class="col-auto">
         <select class="form-select form-select-sm" name="year">
@@ -20,6 +23,7 @@
         </select>
       </div>
       {% endif %}
+
       {% if filters.months %}
       <div class="col-auto">
         <select class="form-select form-select-sm" name="month">
@@ -30,26 +34,22 @@
         </select>
       </div>
       {% endif %}
-      {% if filters.regions %}
-      <div class="col-auto">
-        <select class="form-select form-select-sm" name="region">
-          <option value="">Region</option>
-          {% for r in filters.regions %}
-          <option value="{{ r }}" {% if selected.region == r %}selected{% endif %}>{{ r }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
-      {% if filters.categories %}
-      <div class="col-auto">
-        <select class="form-select form-select-sm" name="category">
-          <option value="">Category</option>
-          {% for c in filters.categories %}
-          <option value="{{ c }}" {% if selected.category == c %}selected{% endif %}>{{ c }}</option>
-          {% endfor %}
-        </select>
-      </div>
-      {% endif %}
+
+      {# Dynamic category filters #}
+      {% for key, vals in filters.items() %}
+        {% if key.startswith('cat_') %}
+        {% set cat_name = key[4:] %}
+        <div class="col-auto">
+          <select class="form-select form-select-sm" name="{{ key }}">
+            <option value="">{{ cat_name }}</option>
+            {% for v in vals %}
+            <option value="{{ v }}" {% if selected.get(key) == v %}selected{% endif %}>{{ v }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        {% endif %}
+      {% endfor %}
+
       <div class="col-auto">
         <button type="submit" class="btn btn-sm btn-primary">Apply</button>
       </div>
@@ -59,6 +59,7 @@
       <div class="col-auto">
         <a href="{{ url_for('index') }}" class="btn btn-sm btn-outline-secondary">New upload</a>
       </div>
+
       {% if presets %}
       <div class="col-12 mt-2 text-end small text-muted d-none d-lg-block">
         Presets:&nbsp;
@@ -71,191 +72,236 @@
   </div>
 </div>
 
+<!-- Trend comparison banner -->
+{% if analysis.trend_metrics and analysis.trend_metrics.comparison_label %}
 <div class="row mb-3">
   <div class="col-lg-8">
-    {% if analysis.trend_metrics.comparison_label %}
     <div class="alert alert-light border small mb-0">
-      <strong>Period comparison:</strong>
-      {{ analysis.trend_metrics.comparison_label }}
-      {% if analysis.trend_metrics.sales_change_pct is not none %}
-      &mdash; Sales change:
-      <span class="{% if analysis.trend_metrics.sales_change_pct >= 0 %}text-success{% else %}text-danger{% endif %}">
-        {{ analysis.trend_metrics.sales_change_pct | round(1) }}%
+      <strong>Period comparison:</strong> {{ analysis.trend_metrics.comparison_label }}
+      {% for change in analysis.trend_metrics.pct_changes %}
+      &mdash; <em>{{ change.col }}</em>:
+      <span class="{% if change.value >= 0 %}text-success{% else %}text-danger{% endif %}">
+        {{ change.value }}%
       </span>
-      {% endif %}
-      {% if analysis.trend_metrics.profit_change_pct is not none %}
-      &nbsp;| Profit change:
-      <span class="{% if analysis.trend_metrics.profit_change_pct >= 0 %}text-success{% else %}text-danger{% endif %}">
-        {{ analysis.trend_metrics.profit_change_pct | round(1) }}%
-      </span>
-      {% endif %}
+      {% endfor %}
     </div>
-    {% endif %}
   </div>
-  <div class="col-lg-4 text-lg-end mt-2 mt-lg-0">
+</div>
+{% endif %}
+
+<!-- Save preset / Download -->
+<div class="row mb-3">
+  <div class="col text-end">
     <form class="d-inline-flex" method="post" action="{{ url_for('save_preset', **selected) }}">
-      <input
-        type="text"
-        class="form-control form-control-sm me-2"
-        name="preset_name"
-        placeholder="Save filters as preset"
-      />
+      <input type="text" class="form-control form-control-sm me-2" name="preset_name" placeholder="Save filters as preset" />
       <button type="submit" class="btn btn-sm btn-outline-primary">Save</button>
     </form>
-    <a href="{{ url_for('download_current') }}" class="btn btn-sm btn-success ms-2">
-      Download CSV
-    </a>
+    <a href="{{ url_for('download_current') }}" class="btn btn-sm btn-success ms-2">Download CSV</a>
   </div>
 </div>
 
+<!-- KPI Cards -->
 <div class="row g-3 mb-4">
-  {% if analysis.special_metrics.get("Total Sales") is not none %}
-  <div class="col-md-4">
+  <div class="col-md-3">
     <div class="card kpi-card shadow-sm hover-lift">
       <div class="card-body text-center">
-        <div class="kpi-label text-muted">Total Sales (₹)</div>
-        <div class="kpi-value">
-          {{ "{:,.0f}".format(analysis.special_metrics["Total Sales"]) }}
-        </div>
+        <div class="kpi-label text-muted">Total Rows</div>
+        <div class="kpi-value">{{ "{:,}".format(analysis.special_metrics["Total Rows"]) }}</div>
       </div>
     </div>
   </div>
-  {% endif %}
-  {% if analysis.special_metrics.get("Total Profit") is not none %}
-  <div class="col-md-4">
-    <div class="card kpi-card shadow-sm hover-lift">
-      <div class="card-body text-center">
-        <div class="kpi-label text-muted">Total Profit (₹)</div>
-        <div class="kpi-value">
-          {{ "{:,.0f}".format(analysis.special_metrics["Total Profit"]) }}
+  {% for label, val in analysis.special_metrics.items() %}
+    {% if label.startswith("Total ") and label != "Total Rows" and label != "Total Loss Amount" and not label.startswith("_") %}
+    <div class="col-md-3">
+      <div class="card kpi-card shadow-sm hover-lift">
+        <div class="card-body text-center">
+          <div class="kpi-label text-muted">{{ label }}</div>
+          <div class="kpi-value">{{ "{:,.2f}".format(val) }}</div>
         </div>
       </div>
     </div>
-  </div>
-  {% endif %}
+    {% endif %}
+  {% endfor %}
   {% if analysis.special_metrics.get("Loss Orders") is not none %}
-  <div class="col-md-4">
+  <div class="col-md-3">
     <div class="card kpi-card shadow-sm hover-lift">
       <div class="card-body text-center">
         <div class="kpi-label text-muted">Loss Orders</div>
-        <div class="kpi-value">
-          {{ analysis.special_metrics["Loss Orders"] }}
-        </div>
+        <div class="kpi-value text-danger">{{ analysis.special_metrics["Loss Orders"] }}</div>
       </div>
     </div>
   </div>
   {% endif %}
 </div>
 
-{% if analysis.special_metrics.get("Loss Orders") is not none %}
+<!-- Detected Schema Info -->
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="card border-0 bg-light shadow-sm">
+      <div class="card-body py-2 px-3">
+        <span class="small fw-semibold me-3">🔍 Detected columns:</span>
+        {% for col in schema.numeric_cols if not col.startswith('_') %}
+          <span class="badge bg-primary me-1">{{ col }} (num)</span>
+        {% endfor %}
+        {% for col in schema.date_cols if not col.startswith('_') %}
+          <span class="badge bg-success me-1">{{ col }} (date)</span>
+        {% endfor %}
+        {% for col in schema.categorical_cols %}
+          <span class="badge bg-secondary me-1">{{ col }} (cat)</span>
+        {% endfor %}
+        {% for col in schema.high_card_cols %}
+          <span class="badge bg-light text-muted border me-1">{{ col }} (text)</span>
+        {% endfor %}
+        {% if not schema.numeric_cols and not schema.categorical_cols %}
+          <span class="text-muted small">No typed columns detected yet.</span>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Loss Overview (if applicable) -->
+{% if analysis.special_metrics.get("Loss Orders") is not none and analysis.special_metrics["Loss Orders"] > 0 %}
 <div class="row mb-4">
   <div class="col-md-4">
-    <div class="card shadow-sm">
+    <div class="card shadow-sm border-danger border-opacity-25">
       <div class="card-body">
-        <h2 class="h6 mb-3">Loss Overview</h2>
-        <p class="mb-1">
-          <strong>Loss Orders:</strong>
-          {{ analysis.special_metrics["Loss Orders"] }}
-        </p>
-        <p class="mb-0">
-          <strong>Total Loss Amount:</strong>
-          ₹ {{ "{:,.0f}".format(analysis.special_metrics["Total Loss Amount"]) }}
-        </p>
+        <h2 class="h6 mb-3">⚠️ Loss Overview</h2>
+        <p class="mb-1"><strong>Loss Orders:</strong> {{ analysis.special_metrics["Loss Orders"] }}</p>
+        <p class="mb-0"><strong>Total Loss:</strong> {{ "{:,.2f}".format(analysis.special_metrics["Total Loss Amount"]) }}</p>
       </div>
     </div>
   </div>
 </div>
 {% endif %}
 
-<div class="row g-4 mb-4">
-  {% if analysis.plots.trend %}
+<!-- Numeric Summary Table -->
+<div class="row mb-4">
   <div class="col-12">
-    <div class="card plot-card shadow-sm fade-in">
+    <div class="card shadow-sm">
       <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.trend | safe }}
+        <h2 class="h6 mb-3">📋 Numeric Summary</h2>
+        <div class="table-responsive">
+          {{ analysis.numeric_summary_html | safe }}
         </div>
       </div>
     </div>
   </div>
-  {% endif %}
 </div>
 
-<div class="row g-4 mb-4">
-  {% if analysis.plots.sales_hist %}
-  <div class="col-md-6">
-    <div class="card plot-card shadow-sm fade-in">
-      <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.sales_hist | safe }}
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-  {% if analysis.plots.profit_hist %}
-  <div class="col-md-6">
-    <div class="card plot-card shadow-sm fade-in">
-      <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.profit_hist | safe }}
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-</div>
+<!-- All Dynamic Plots -->
+{% if analysis.plots %}
 
-<div class="row g-4 mb-4">
-  {% if analysis.plots.region_bar %}
-  <div class="col-lg-6">
-    <div class="card plot-card shadow-sm fade-in">
-      <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.region_bar | safe }}
+  {# --- Time-series trends (full width) --- #}
+  {% set trend_plots = [] %}
+  {% for slot, html in analysis.plots.items() %}
+    {% if slot.startswith('trend_') %}{% set _ = trend_plots.append((slot, html)) %}{% endif %}
+  {% endfor %}
+  {% if trend_plots %}
+  <div class="row g-4 mb-4">
+    {% for slot, html in trend_plots %}
+    <div class="col-12">
+      <div class="card plot-card shadow-sm fade-in">
+        <div class="card-body">
+          <div class="plot-container">{{ html | safe }}</div>
         </div>
       </div>
     </div>
+    {% endfor %}
   </div>
   {% endif %}
-  {% if analysis.plots.region_pie %}
-  <div class="col-lg-6">
-    <div class="card plot-card shadow-sm fade-in">
-      <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.region_pie | safe }}
-        </div>
-      </div>
-    </div>
-  </div>
-  {% endif %}
-</div>
 
-<div class="row g-4 mb-4">
-  {% if analysis.plots.subcat_profit %}
-  <div class="col-lg-6">
-    <div class="card plot-card shadow-sm fade-in">
-      <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.subcat_profit | safe }}
+  {# --- Histograms (2-per-row) --- #}
+  {% set hist_plots = [] %}
+  {% for slot, html in analysis.plots.items() %}
+    {% if slot.startswith('hist_') %}{% set _ = hist_plots.append((slot, html)) %}{% endif %}
+  {% endfor %}
+  {% if hist_plots %}
+  <div class="row g-4 mb-4">
+    {% for slot, html in hist_plots %}
+    <div class="col-md-6">
+      <div class="card plot-card shadow-sm fade-in">
+        <div class="card-body">
+          <div class="plot-container">{{ html | safe }}</div>
         </div>
       </div>
     </div>
+    {% endfor %}
   </div>
   {% endif %}
-  {% if analysis.plots.top_customers %}
-  <div class="col-lg-6">
-    <div class="card plot-card shadow-sm fade-in">
-      <div class="card-body">
-        <div class="plot-container">
-          {{ analysis.plots.top_customers | safe }}
+
+  {# --- Bar charts (2-per-row) --- #}
+  {% set bar_plots = [] %}
+  {% for slot, html in analysis.plots.items() %}
+    {% if slot.startswith('bar_') %}{% set _ = bar_plots.append((slot, html)) %}{% endif %}
+  {% endfor %}
+  {% if bar_plots %}
+  <div class="row g-4 mb-4">
+    {% for slot, html in bar_plots %}
+    <div class="col-lg-6">
+      <div class="card plot-card shadow-sm fade-in">
+        <div class="card-body">
+          <div class="plot-container">{{ html | safe }}</div>
         </div>
       </div>
     </div>
+    {% endfor %}
   </div>
   {% endif %}
+
+  {# --- Pie charts (2-per-row) --- #}
+  {% set pie_plots = [] %}
+  {% for slot, html in analysis.plots.items() %}
+    {% if slot.startswith('pie_') %}{% set _ = pie_plots.append((slot, html)) %}{% endif %}
+  {% endfor %}
+  {% if pie_plots %}
+  <div class="row g-4 mb-4">
+    {% for slot, html in pie_plots %}
+    <div class="col-lg-6">
+      <div class="card plot-card shadow-sm fade-in">
+        <div class="card-body">
+          <div class="plot-container">{{ html | safe }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {# --- Scatter + Correlation + Top-entities (side by side or full) --- #}
+  {% set misc_plots = [] %}
+  {% for slot, html in analysis.plots.items() %}
+    {% if slot in ['scatter', 'correlation', 'top_entities'] %}
+      {% set _ = misc_plots.append((slot, html)) %}
+    {% endif %}
+  {% endfor %}
+  {% if misc_plots %}
+  <div class="row g-4 mb-4">
+    {% for slot, html in misc_plots %}
+    <div class="col-lg-{% if misc_plots|length == 1 %}12{% else %}6{% endif %}">
+      <div class="card plot-card shadow-sm fade-in">
+        <div class="card-body">
+          <div class="plot-container">{{ html | safe }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+{% else %}
+<!-- No plots could be generated -->
+<div class="row mb-4">
+  <div class="col-12">
+    <div class="alert alert-info">
+      <strong>📭 No charts could be generated.</strong>
+      Your CSV was loaded successfully and the summary table above shows its statistics.
+      To unlock charts, your CSV needs at least one <strong>numeric column</strong>.
+      Date and categorical columns will also unlock trend lines and bar/pie charts.
+      <a href="{{ url_for('index') }}#reqBody" class="alert-link">See minimum requirements ↗</a>
+    </div>
+  </div>
 </div>
+{% endif %}
 
 {% endblock %}
-
-

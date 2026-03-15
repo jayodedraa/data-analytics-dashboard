@@ -48,3 +48,58 @@ The visible part of the application used the following:
 * **HTML/CSS:** Structures the page and provides basic styles.
 * **Bootstrap 5:** A popular CSS framework (loaded via the internet provider/CDN) that gives the app its modern look, mobile responsiveness, layout grids, buttons, and dropdown menus without having to write thousands of lines of custom CSS.
 * **Jinja2:** Flask’s templating language. It allows the HTML files to act like fill-in-the-blank forms. For example, `{{ analysis.special_metrics["Total Sales"] }}` in the HTML file is dynamically replaced with the actual calculated number by Flask before it is sent to the user's screen.
+
+---
+
+## 🚀 Deployment
+
+### Local Development
+To run the application locally:
+
+```bash
+# Activate virtual environment
+.venv\Scripts\activate          # on Windows
+
+# Run the Flask app
+python webapp/app.py
+```
+
+Then open http://127.0.0.1:5000 in your browser.
+
+### Production Deployment on Renderer
+
+This project is configured for automatic deployment on [Render](https://render.com):
+
+#### Deployment Files Added:
+- **`render.yaml`** - Render service configuration
+- **Updated `requirements.txt`** - Added Gunicorn for production WSGI server
+- **Updated `webapp/app.py`** - Production-ready server settings
+
+#### Quick Deploy Steps:
+1. Push your code to GitHub
+2. Go to [render.com](https://render.com)
+3. Connect your GitHub repository
+4. Render will automatically detect and deploy using `render.yaml`
+
+#### Production Configuration:
+- **Web Server**: Gunicorn WSGI server
+- **Environment**: Production mode with debug disabled
+- **Port**: Uses Render's PORT environment variable (10000)
+- **Health Check**: Root path monitoring
+- **Auto-scaling**: Free tier with sleep after 15 minutes inactivity
+
+---
+
+## 📁 Project Structure
+
+```
+Data Analyst Project/
+├── render.yaml              # Render deployment configuration
+├── requirements.txt         # Python dependencies (includes gunicorn)
+├── README.md               # This file
+├── webapp/
+│   ├── app.py             # Main Flask application
+│   ├── static/            # CSS, JS, images
+│   └── templates/         # HTML templates
+├── data_augmented.csv     # Sample dataset
+└── data_cleaned.csv       # Cleaned sample dataset
